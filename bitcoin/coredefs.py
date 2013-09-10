@@ -61,11 +61,11 @@ TESTNET_CHECKPOINTS = {
 
 
 NETWORKS = {
-    'mainnet': NetMagic(b"\xf9\xbe\xb4\xd9",
+    'mainnet': NetMagic(0xd9b4bef9,
     0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f,
     MAINNET_CHECKPOINTS),
 
-    'testnet3': NetMagic(b"\x0b\x11\x09\x07",
+    'testnet3': NetMagic(0x709110b,
     0x000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943,
     TESTNET_CHECKPOINTS),
 }

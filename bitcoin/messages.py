@@ -9,102 +9,153 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import collections
 import cStringIO
 import hashlib
 import random
 import struct
-import time
+import time as pytime
 
 from bitcoin import core
 from bitcoin import coredefs
 from bitcoin import serialize
+from bitcoin import _types
 
 MSG_TX = 1
 MSG_BLOCK = 2
 
 
-class msg_version(object):
-    command = b"version"
+class Message(_types.SerializableDict):
+    _fields = collections.OrderedDict([('magic', _types.UInt32),
+                                       ('command', _types.CommandStr),
+                                       ('length', _types.UInt32),
+                                       ('checksum', _types.Checksum)])
 
-    def __init__(self, protover=coredefs.PROTO_VERSION):
-        self.protover = coredefs.MIN_PROTO_VERSION
-        self.nVersion = protover
-        self.nServices = 1
-        self.nTime = time.time()
-        self.addrTo = core.CAddress(coredefs.MIN_PROTO_VERSION)
-        self.addrFrom = core.CAddress(coredefs.MIN_PROTO_VERSION)
-        self.nNonce = random.getrandbits(64)
-        self.strSubVer = b'/python-bitcoin-0.0.1/'
-        self.nStartingHeight = -1
+    def __init__(self, magic, payload, length=None, checksum=None, *args,
+                 **kwargs):
+        self._fields['payload'] = type(payload)
 
-    def deserialize(self, f):
-        self.nVersion = struct.unpack(b"<i", f.read(4))[0]
+        kwargs['magic'] = magic
+        kwargs['payload'] = payload
+        kwargs['length'] = length
+        kwargs['checksum'] = checksum
 
-        if self.nVersion == 10300:
-            self.nVersion = 300
+        _types.SerializableDict.__init__(self, *args, **kwargs)
 
-        self.nServices = struct.unpack(b"<Q", f.read(8))[0]
-        self.nTime = struct.unpack(b"<q", f.read(8))[0]
-        self.addrTo = core.CAddress(coredefs.MIN_PROTO_VERSION)
-        self.addrTo.deserialize(f)
+    @classmethod
+    def deserialize(cls, f, version=None):
+        magic = cls._fields['magic'].deserialize(f, version=version)
+        command = cls._fields['command'].deserialize(f, version=version)
+        length = cls._fields['length'].deserialize(f, version=version)
+        checksum = cls._fields['checksum'].deserialize(f, version=version)
 
-        if self.nVersion >= 106:
-            self.addrFrom = core.CAddress(coredefs.MIN_PROTO_VERSION)
-            self.addrFrom.deserialize(f)
-            self.nNonce = struct.unpack(b"<Q", f.read(8))[0]
-            self.strSubVer = serialize.deser_string(f)
+        payload = MESSAGE_MAP[command].deserialize(f, version=version)
 
-            if self.nVersion >= 209:
-                self.nStartingHeight = struct.unpack(b"<i", f.read(4))[0]
+        return cls(magic=magic, length=length, checksum=checksum,
+                   payload=payload, command=command)
 
-            else:
-                self.nStartingHeight = None
+    def serialize(self, f, version=None):
+        data = cStringIO.StringIO()
+        self['payload'].serialize(data, version=version)
+        data = data.getvalue()
 
-        else:
-            self.addrFrom = None
-            self.nNonce = None
-            self.strSubVer = None
-            self.nStartingHeight = None
-
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<i", self.nVersion)
-        r += struct.pack(b"<Q", self.nServices)
-        r += struct.pack(b"<q", self.nTime)
-        r += self.addrTo.serialize()
-        r += self.addrFrom.serialize()
-        r += struct.pack(b"<Q", self.nNonce)
-        r += serialize.ser_string(self.strSubVer)
-        r += struct.pack(b"<i", self.nStartingHeight)
-        return r
-
-    def __repr__(self):
-        return ("msg_version(nVersion=%i nServices=%i nTime=%s "
-                "addrTo=%s addrFrom=%s nNonce=0x%016X strSubVer=%s "
-                "nStartingHeight=%i)" % (self.nVersion,
-                                         self.nServices,
-                                         time.ctime(self.nTime),
-                                         repr(self.addrTo),
-                                         repr(self.addrFrom),
-                                         self.nNonce,
-                                         self.strSubVer,
-                                         self.nStartingHeight))
+        self['magic'].serialize(f, version=version)
+        command = self._fields['command'](self['payload'].command)
+        command.serialize(f, version=version)
+        self._fields['length'](len(data)).serialize(f, version=version)
+        self._fields['checksum'](data).serialize(f, version=version)
+        f.write(data)
 
 
-class msg_verack(object):
-    command = b"verack"
+class Version(_types.SerializableDict):
+    command = b'version'
+    _key_map = {'protover': 'version',
+                'nVersion': 'version',
+                'nServices': 'services',
+                'nTime': 'time',
+                'addrTo': 'addr_recv',
+                'addr_to': 'addr_recv',
+                'addrFrom': 'addr_from',
+                'nNonce': 'nonce',
+                'strSubVersion': 'user_agent',
+                'nStartingHeight': 'start_height'}
 
-    def __init__(self, protover=coredefs.PROTO_VERSION):
-        self.protover = protover
+    _fields = collections.OrderedDict([('version', _types.Int32),
+                                       ('services', _types.UInt64),
+                                       ('time', _types.Int64),
+                                       ('addr_recv', core.NetAddr),
+                                       ('addr_from', core.NetAddr),
+                                       ('nonce', _types.UInt64),
+                                       ('user_agent', _types.VarStr),
+                                       ('start_height', _types.Int32),
+                                       ('relay', _types.Bool)])
 
-    def deserialize(self, f):
-        pass
+    def __init__(self, version=coredefs.PROTO_VERSION, services=1,
+                 user_agent=b'/python-bitcoin-0.0.1/',  start_height=-1,
+                 relay=False, *args, **kwargs):
+        if version == 10300:
+            version = 300
 
-    def serialize(self):
-        return b""
+        kwargs['version'] = version
+        kwargs['services'] = services
+        kwargs['user_agent'] = user_agent
+        kwargs['start_height'] = start_height
+        kwargs['relay'] = relay
 
-    def __repr__(self):
-        return "msg_verack()"
+        if 'time' not in kwargs:
+            kwargs['time'] = pytime.time()
+
+        if 'addr_recv' not in kwargs:
+            kwargs['addr_recv'] = core.NetAddr()
+
+        if 'addr_from' not in kwargs:
+            kwargs['addr_from'] = core.NetAddr()
+
+        if 'nonce' not in kwargs:
+            kwargs['nonce'] = random.getrandbits(64)
+
+        _types.SerializableDict.__init__(self, *args, **kwargs)
+
+    @classmethod
+    def deserialize(cls, f, version=None):
+        # NOTE Version.deserialize will always ignore the passed version
+        #      and read it from the stream instead
+        version = cls._fields['version'].deserialize(f)
+
+        if version == 10300:
+            version = 300
+
+        def deserialize(field):
+            return cls._fields[field].deserialize(f, version=version)
+
+        services = deserialize('services')
+        time = deserialize('time')
+        addr_recv = cls._fields['addr_recv'].deserialize(f, version=0)
+        addr_from = None
+        nonce = None
+        user_agent = None
+        start_height = None
+        relay = None
+
+        if version >= 106:
+            addr_from = cls._fields['addr_from'].deserialize(f, version=0)
+            nonce = deserialize('nonce')
+            user_agent = deserialize('user_agent')
+
+            if version >= 209:
+                start_height = deserialize('start_height')
+
+                if version >= 70001:
+                    relay = deserialize('relay')
+
+        return cls(version=version, services=services, time=time,
+                   addr_recv=addr_recv, addr_from=addr_from, nonce=nonce,
+                   user_agent=user_agent, start_height=start_height,
+                   relay=relay)
+
+
+class VerAck(_types.SerializableDict):
+    command = b'verack'
 
 
 class msg_addr(object):
@@ -297,44 +348,39 @@ class msg_getaddr(object):
 #msg_reply
 
 
-class msg_ping(object):
-    command = b"ping"
+class Ping(_types.SerializableDict):
+    command = b'ping'
 
-    def __init__(self, protover=coredefs.PROTO_VERSION, nonce=0):
-        self.protover = protover
-        self.nonce = nonce
+    _key_map = {'protover': 'version'}
+    _fields = collections.OrderedDict([('nonce', _types.UInt64)])
 
-    def deserialize(self, f):
-        if self.protover > coredefs.BIP0031_VERSION:
-            self.nonce = struct.unpack(b"<Q", f.read(8))[0]
+    def __init__(self, version=coredefs.PROTO_VERSION, nonce=0):
+        self['version'] = version
+        self['nonce'] = nonce
 
-    def serialize(self):
-        r = b""
-        if self.protover > coredefs.BIP0031_VERSION:
-            r += struct.pack(b"<Q", self.nonce)
-        return r
+    @classmethod
+    def deserialize(cls, f, version=None):
+        version = version if version is not None else coredefs.PROTO_VERSION
+        fields = cls._fields.copy()
 
-    def __repr__(self):
-        return "msg_ping(0x%x)" % (self.nonce,)
+        if version is not None and version < coredefs.BIP0031_VERSION:
+            del fields['nonce']
+
+        return _types.SerializableDict.deserialize.im_func(cls, f, fields,
+                                                           version)
+
+    def serialize(self, f, version=None):
+        version = version if version is not None else self['version']
+        fields = self._fields.copy()
+
+        if version is not None and version < coredefs.BIP0031_VERSION:
+            del fields['nonce']
+
+        return _types.SerializableDict.serialize(self, f, fields, version)
 
 
-class msg_pong(object):
-    command = b"pong"
-
-    def __init__(self, protover=coredefs.PROTO_VERSION, nonce=0):
-        self.protover = protover
-        self.nonce = nonce
-
-    def deserialize(self, f):
-        self.nonce = struct.unpack(b"<Q", f.read(8))[0]
-
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<Q", self.nonce)
-        return r
-
-    def __repr__(self):
-        return "msg_pong(0x%x)" % (self.nonce,)
+class Pong(Ping):
+    command = b'pong'
 
 
 class msg_mempool(object):
@@ -353,20 +399,20 @@ class msg_mempool(object):
         return "msg_mempool()"
 
 
-messagemap = {
-    "version": msg_version,
-    "verack": msg_verack,
-    "addr": msg_addr,
-    "alert": msg_alert,
-    "inv": msg_inv,
-    "getdata": msg_getdata,
-    "getblocks": msg_getblocks,
-    "tx": msg_tx,
-    "block": msg_block,
-    "getaddr": msg_getaddr,
-    "ping": msg_ping,
-    "pong": msg_pong,
-    "mempool": msg_mempool
+MESSAGE_MAP = {
+    'version': Version,
+    'verack': VerAck,
+    'addr': msg_addr,
+    'alert': msg_alert,
+    'inv': msg_inv,
+    'getdata': msg_getdata,
+    'getblocks': msg_getblocks,
+    'tx': msg_tx,
+    'block': msg_block,
+    'getaddr': msg_getaddr,
+    'ping': Ping,
+    'pong': Pong,
+    'mempool': msg_mempool
 }
 
 
@@ -404,28 +450,19 @@ def message_read(netmagic, f):
         raise ValueError("got bad checksum %s" % repr(recvbuf))
     recvbuf = recvbuf[4+12+4+4+msglen:]
 
-    if command in messagemap:
+    if command in MESSAGE_MAP:
         f = cStringIO.StringIO(msg)
-        t = messagemap[command]()
+        t = MESSAGE_MAP[command]()
         t.deserialize(f)
         return t
     else:
         return None
 
 
-def message_to_str(netmagic, message):
-    command = message.command
-    data = message.serialize()
-    tmsg = netmagic.msg_start
-    tmsg += command
-    tmsg += b"\x00" * (12 - len(command))
-    tmsg += struct.pack(b"<I", len(data))
+def message_read(netmagic, f, version=None):
+    try:
+        msg = Message.deserialize(f, version=version)
+    except IOError:
+        return
 
-    # add checksum
-    th = hashlib.sha256(data).digest()
-    h = hashlib.sha256(th).digest()
-    tmsg += h[:4]
-
-    tmsg += data
-
-    return tmsg
+    return msg

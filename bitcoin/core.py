@@ -9,366 +9,360 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import cStringIO
+import itertools
+
+import collections
 import struct
-import socket
-import binascii
-import time
-import hashlib
 
 from bitcoin import serialize
 from bitcoin import coredefs
 from bitcoin import script
+from bitcoin import _types
 
 
-class CAddress(object):
+class NetAddr(_types.SerializableDict):
+    _key_map = {'protover': 'version',
+                'nTime': 'time',
+                'nServices': 'services'}
 
-    def __init__(self, protover=coredefs.PROTO_VERSION):
-        self.protover = protover
-        self.nTime = 0
-        self.nServices = 1
-        self.pchReserved = b"\x00" * 10 + b"\xff" * 2
-        self.ip = "0.0.0.0"
-        self.port = 0
+    _fields = collections.OrderedDict([('time', _types.UInt32),
+                                       ('services', _types.UInt64),
+                                       ('ip', _types.IPAddress),
+                                       ('port', _types.UInt16)])
 
-    def deserialize(self, f):
-        if self.protover >= coredefs.CADDR_TIME_VERSION:
-            self.nTime = struct.unpack(b"<I", f.read(4))[0]
+    def __init__(self, time=0, services=1, port=0,
+                 version=coredefs.PROTO_VERSION, *args, **kwargs):
 
-        self.nServices = struct.unpack(b"<Q", f.read(8))[0]
-        self.pchReserved = f.read(12)
-        self.ip = socket.inet_ntoa(f.read(4))
-        self.port = struct.unpack(b">H", f.read(2))[0]
+        kwargs['time'] = time
+        kwargs['services'] = services
+        kwargs['port'] = port
+        kwargs['version'] = version
 
-    def serialize(self):
-        r = b""
+        if 'ip' not in kwargs:
+            kwargs['ip'] = _types.IPAddress('::')
 
-        if self.protover >= coredefs.CADDR_TIME_VERSION:
-            r += struct.pack(b"<I", self.nTime)
+        _types.SerializableDict.__init__(self, *args, **kwargs)
 
-        r += struct.pack(b"<Q", self.nServices)
-        r += self.pchReserved
-        r += socket.inet_aton(self.ip)
-        r += struct.pack(b">H", self.port)
-        return r
+    @classmethod
+    def deserialize(cls, f, version=None):
+        version = version if version is not None else coredefs.PROTO_VERSION
+        fields = cls._fields.copy()
 
-    def __repr__(self):
-        return ("CAddress(nTime=%d nServices=%i ip=%s port=%i)" %
-                (self.nTime, self.nServices, self.ip, self.port))
+        if version is not None and version < coredefs.CADDR_TIME_VERSION:
+            del fields['time']
 
+        return _types.SerializableDict.deserialize.im_func(cls, f, fields,
+                                                           version)
 
-class CInv(object):
-    typemap = {0: "Error",
-               1: "TX",
-               2: "Block"}
+    def serialize(self, f, version=None):
+        version = version if version is not None else self['version']
+        fields = self._fields.copy()
 
-    def __init__(self):
-        self.type = 0
-        self.hash = 0
+        if version is not None and version < coredefs.CADDR_TIME_VERSION:
+            del fields['time']
 
-    def deserialize(self, f):
-        self.type = struct.unpack(b"<i", f.read(4))[0]
-        self.hash = serialize.deser_uint256(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<i", self.type)
-        r += serialize.ser_uint256(self.hash)
-        return r
-
-    def __repr__(self):
-        return "CInv(type=%s hash=%064x)" % (self.typemap[self.type],
-                                             self.hash)
+        return _types.SerializableDict.serialize(self, f, fields, version)
 
 
-class CBlockLocator(object):
+class Inv(_types.SerializableDict):
+    typemap = {0: 'Error',
+               1: 'TX',
+               2: 'Block'}
 
-    def __init__(self):
-        self.nVersion = coredefs.PROTO_VERSION
-        self.vHave = []
+    _fields = collections.OrderedDict([('type', _types.UInt32),
+                                       ('hash', _types.Hash)])
 
-    def deserialize(self, f):
-        self.nVersion = struct.unpack(b"<i", f.read(4))[0]
-        self.vHave = serialize.deser_uint256_vector(f)
+    def __init__(self, version=coredefs.PROTO_VERSION, *args, **kwargs):
 
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<i", self.nVersion)
-        r += serialize.ser_uint256_vector(self.vHave)
-        return r
+        if '_type' in kwargs:
+            kwargs['type'] = kwargs['_type']
+            del kwargs['_type']
 
-    def __repr__(self):
-        return "CBlockLocator(nVersion=%i vHave=%s)" % (self.nVersion,
-                                                        repr(self.vHave))
+        if '_hash' in kwargs:
+            kwargs['hash'] = kwargs['_hash']
+            del kwargs['_hash']
 
+        if 'type' not in kwargs:
+            kwargs['type'] = 0
 
-class COutPoint(object):
+        if 'hash' not in kwargs:
+            kwargs['hash'] = 0
 
-    def __init__(self):
-        self.hash = 0
-        self.n = 0
+        kwargs['version'] = version
 
-    def deserialize(self, f):
-        self.hash = serialize.deser_uint256(f)
-        self.n = struct.unpack(b"<I", f.read(4))[0]
-
-    def serialize(self):
-        r = b""
-        r += serialize.ser_uint256(self.hash)
-        r += struct.pack(b"<I", self.n)
-        return r
-
-    def set_null(self):
-        self.hash = 0
-        self.n = 0xffffffff
-
-    def is_null(self):
-        return ((self.hash == 0) and (self.n == 0xffffffff))
-
-    def copy(self, old_outpt):
-        self.hash = old_outpt.hash
-        self.n = old_outpt.n
-
-    def __repr__(self):
-        return "COutPoint(hash=%064x n=%i)" % (self.hash, self.n)
+        _types.SerializableDict.__init__(self, *args, **kwargs)
 
 
-class CTxIn(object):
+class BlockLocator(_types.SerializableDict):
+    _key_map = {'nVersion': 'version',
+                'vHave': 'block_locator_hashes'}
 
-    def __init__(self):
-        self.prevout = COutPoint()
-        self.scriptSig = b""
-        self.nSequence = 0xffffffff
+    _fields = collections.OrderedDict([('version', _types.UInt32),
+                                       ('block_locator_hashes',
+                                        _types._array(_types.Hash)),
+                                       ('hash_stop', _types.Hash)])
 
-    def deserialize(self, f):
-        self.prevout = COutPoint()
-        self.prevout.deserialize(f)
-        self.scriptSig = serialize.deser_string(f)
-        self.nSequence = struct.unpack(b"<I", f.read(4))[0]
+    def __init__(self, hash_stop=0, version=coredefs.PROTO_VERSION,
+                 *args, **kwargs):
 
-    def serialize(self):
-        r = b""
-        r += self.prevout.serialize()
-        r += serialize.ser_string(self.scriptSig)
-        r += struct.pack(b"<I", self.nSequence)
-        return r
+        kwargs['version'] = version
+        kwargs['hash_stop'] = hash_stop
 
-    def is_final(self):
-        return (self.nSequence == 0xffffffff)
+        if 'block_locator_hashes' not in kwargs:
+            kwargs['block_locator_hashes'] = []
 
-    def is_valid(self):
-        if not script.CSript().tokenize(self.scriptSig):
-            return False
-
-        return True
-
-    def copy(self, old_txin):
-        self.prevout = COutPoint()
-        self.prevout.copy(old_txin.prevout)
-        self.scriptSig = old_txin.scriptSig
-        self.nSequence = old_txin.nSequence
-
-    def __repr__(self):
-        return ("CTxIn(prevout=%s scriptSig=%s nSequence=%i)" %
-                (repr(self.prevout), binascii.hexlify(self.scriptSig),
-                 self.nSequence))
+        _types.SerializableDict.__init__(self, *args, **kwargs)
 
 
-class CTxOut(object):
+class OutPoint(_types.SerializableDict):
+    _fields = collections.OrderedDict([('hash', _types.Hash),
+                                       ('index', _types.UInt32)])
 
-    def __init__(self):
-        self.nValue = -1
-        self.scriptPubKey = b""
+    def __init__(self, index=None, version=coredefs.PROTO_VERSION,
+                 *args, **kwargs):
 
-    def deserialize(self, f):
-        self.nValue = struct.unpack(b"<q", f.read(8))[0]
-        self.scriptPubKey = serialize.deser_string(f)
+        kwargs['index'] = index
 
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<q", self.nValue)
-        r += serialize.ser_string(self.scriptPubKey)
-        return r
+        if '_hash' in kwargs:
+            kwargs['hash'] = kwargs['_hash']
+            del kwargs['_hash']
 
-    def is_valid(self):
-        if not coredefs.MoneyRange(self.nValue):
-            return False
+        if 'hash' not in kwargs:
+            kwargs['hash'] = 0
 
-        if not script.CScript().tokenize(self.scriptPubKey):
-            return False
+        kwargs['version'] = version
 
-        return True
+        _types.SerializableDict.__init__(self, *args, **kwargs)
 
-    def copy(self, old_txout):
-        self.nValue = old_txout.nValue
-        self.scriptPubKey = old_txout.scriptPubKey
-
-    def __repr__(self):
-        return ("CTxOut(nValue=%i.%08i scriptPubKey=%s)" %
-                (self.nValue // 100000000, self.nValue % 100000000,
-                 binascii.hexlify(self.scriptPubKey)))
+    def __nonzero__(self):
+        return self['hash'] == 0 and self['index'] is None
 
 
-class CTransaction(object):
+class TxIn(_types.SerializableDict):
+    _key_map = {'previous': 'previous_output',
+                'prevout': 'previous_output',
+                'scriptSig': 'signature_script',
+                'nSequence': 'sequence'}
 
-    def __init__(self):
-        # serialized
-        self.nVersion = 1
-        self.vin = []
-        self.vout = []
-        self.nLockTime = 0
+    _fields = collections.OrderedDict([('previous_output', OutPoint),
+                                       ('signature_script', _types.VarStr),
+                                       ('sequence', _types.UInt32)])
 
-        # used at runtime
-        self.sha256 = None
-        self.nFeesPaid = 0
-        self.dFeePerKB = None
-        self.dPriority = None
-        self.ser_size = 0
+    def __init__(self, signature_script=b'', sequence=0xffffffff,
+                 version=coredefs.PROTO_VERSION, *args, **kwargs):
+        kwargs['signature_script'] = signature_script
+        kwargs['sequence'] = sequence
 
-    def deserialize(self, f):
-        self.nVersion = struct.unpack(b"<i", f.read(4))[0]
-        self.vin = serialize.deser_vector(f, CTxIn)
-        self.vout = serialize.deser_vector(f, CTxOut)
-        self.nLockTime = struct.unpack(b"<I", f.read(4))[0]
+        if 'previous_output' not in kwargs:
+            kwargs['previous_output'] = OutPoint()
 
-    def serialize(self):
-        r = b""
-        r += struct.pack(b"<i", self.nVersion)
-        r += serialize.ser_vector(self.vin)
-        r += serialize.ser_vector(self.vout)
-        r += struct.pack(b"<I", self.nLockTime)
-        return r
+        kwargs['version'] = version
+
+        _types.SerializableDict.__init__(self, *args, **kwargs)
+
+    @property
+    def final(self):
+        return self['sequence'] == 0xffffffff
+
+    @property
+    def valid(self):
+        if script.CSript().tokenize(self['signature_script']):
+            return True
+
+        return False
+
+
+class TxOut(_types.SerializableDict):
+    _key_map = {'nValue': 'value',
+                'scriptPubKey': 'pk_script'}
+
+    _fields = collections.OrderedDict([('value', _types.Int64),
+                                       ('pk_script', _types.VarStr)])
+
+    def __init__(self, value=-1, pk_script=b'',
+                 version=coredefs.PROTO_VERSION, *args, **kwargs):
+        kwargs['value'] = value
+        kwargs['pk_script'] = pk_script
+
+        _types.SerializableDict.__init__(self, *args, **kwargs)
+
+    @property
+    def valid(self):
+        if (0 <= self['value'] <= coredefs.MAX_MONEY and
+                script.CScript().tokenize(self['pk_script'])):
+            return True
+
+        return False
+
+
+class Transaction(_types.SerializableDict):
+    _key_map = {'nVersion': 'version',
+                'vin': 'tx_in',
+                'vout': 'tx_out',
+                'nLockTime': 'lock_time'}
+
+    _fields = collections.OrderedDict([('version', _types.UInt32),
+                                       ('tx_in', _types._array(TxIn)),
+                                       ('tx_out', _types._array(TxOut)),
+                                       ('lock_time', _types.UInt32)])
+
+    def __init__(self, lock_time=0, version=coredefs.PROTO_VERSION,
+                 *args, **kwargs):
+        kwargs['version'] = version
+        kwargs['lock_time'] = lock_time
+
+        if 'tx_in' not in kwargs:
+            kwargs['tx_in'] = []
+
+        if 'tx_out' not in kwargs:
+            kwargs['tx_out'] = []
+
+        _types.SerializableDict.__init__(self, *args, **kwargs)
+
+    # NOTE Fields that need to be implementated
+    #    self.nFeesPaid = 0
+    #    self.dFeePerKB = None
+    #    self.dPriority = None
+    #    self.ser_size = 0
+
+    def __nonzero__(self):
+        return self['tx_in'] and self['tx_out']
+
+    @property
+    def sha256(self):
+        if not hasattr(self, '_sha256'):
+            self.calc_sha256()
+        return self._sha256
 
     def calc_sha256(self):
-        if self.sha256 is None:
-            self.sha256 = serialize.Hash(self.serialize())
+        f = cStringIO.StringIO()
+        self.serialize(f, version=self['version'])
+        self._sha256 = _types.Hash(data=f.getvalue())
+        return self._sha256
 
-    def is_valid(self):
-        self.calc_sha256()
+    @property
+    def valid(self):
+        if not self['tx_in'] or not self['tx_out']:
+            return False
 
-        if not self.is_coinbase():
-            for tin in self.vin:
-                if not tin.is_valid():
-                    return False
+        # TODO check the serialized size
+        # https://github.com/bitcoin/bitcoin/blob/master/src/main.cpp#L703
 
-        for tout in self.vout:
-            if not tout.is_valid():
+        if not all([tx.valid for tx in self['tx_out']]):
+            return False
+
+        value = sum([tx['value'] for tx in self['tx_out']])
+        if not (0 <= value <= coredefs.MAX_MONEY):
+            return False
+
+        inputs = set([tx['previous_output'] for tx in self['tx_in']])
+        if len(inputs) != len(self['tx_in']):
+            return False
+
+        if self.coinbase:
+            if not (2 <= self['tx_in'][0]['signature_script'] <= 100):
+                return False
+
+        else:
+            if not all(inputs):
                 return False
 
         return True
 
-    def is_final(self):
-        for tin in self.vin:
-            if not tin.is_final():
-                return False
-        return True
+    @property
+    def final(self):
+        if all([tx.final for tx in self['tx_in']]):
+            return True
 
-    def is_coinbase(self):
-        return len(self.vin) == 1 and self.vin[0].prevout.is_null()
+        return False
 
-    def copy(self, old_tx):
-        self.nVersion = old_tx.nVersion
-        self.vin = []
-        self.vout = []
-        self.nLockTime = old_tx.nLockTime
-        self.sha256 = None
-
-        for old_txin in old_tx.vin:
-            txin = CTxIn()
-            txin.copy(old_txin)
-            self.vin.append(txin)
-
-        for old_txout in old_tx.vout:
-            txout = CTxOut()
-            txout.copy(old_txout)
-            self.vout.append(txout)
-
-    def __repr__(self):
-        return ("CTransaction(nVersion=%i vin=%s vout=%s nLockTime=%i)" %
-                (self.nVersion, repr(self.vin), repr(self.vout),
-                 self.nLockTime))
+    @property
+    def coinbase(self):
+        return len(self['tx_in']) == 1 and self['tx_in'][0].prevout
 
 
-class CBlock(object):
+class Block(_types.SerializableDict):
+    _key_map = {'nVersion': 'version',
+                'hashPrevBlock': 'prev_block',
+                'hashMerkleRoot': 'merkle_root',
+                'nTime': 'timestamp',
+                'nBits': 'bits',
+                'nNonce': 'nonce',
+                'vtx': 'txns'}
 
-    def __init__(self):
-        self.nVersion = 1
-        self.hashPrevBlock = 0
-        self.hashMerkleRoot = 0
-        self.nTime = 0
-        self.nBits = 0
-        self.nNonce = 0
-        self.vtx = []
-        self.sha256 = None
+    _fields = collections.OrderedDict([('version', _types.UInt32),
+                                       ('prev_block', _types.Hash),
+                                       ('merkle_root', _types.Hash),
+                                       ('timestamp', _types.UInt32),
+                                       ('bits', _types.UInt32),
+                                       ('nonce', _types.UInt32),
+                                       ('txns', _types._array(Transaction))])
 
-    def deserialize(self, f):
-        self.nVersion = struct.unpack(b"<i", f.read(4))[0]
-        self.hashPrevBlock = serialize.deser_uint256(f)
-        self.hashMerkleRoot = serialize.deser_uint256(f)
-        self.nTime = struct.unpack(b"<I", f.read(4))[0]
-        self.nBits = struct.unpack(b"<I", f.read(4))[0]
-        self.nNonce = struct.unpack(b"<I", f.read(4))[0]
-        self.vtx = serialize.deser_vector(f, CTransaction)
+    def __init__(self, prev_block=0, merkle_root=0, timestamp=0, bits=0,
+                 nonce=0, version=coredefs.PROTO_VERSION, *args, **kwargs):
 
-    def serialize_hdr(self):
-        r = b""
-        r += struct.pack(b"<i", self.nVersion)
-        r += serialize.ser_uint256(self.hashPrevBlock)
-        r += serialize.ser_uint256(self.hashMerkleRoot)
-        r += struct.pack(b"<I", self.nTime)
-        r += struct.pack(b"<I", self.nBits)
-        r += struct.pack(b"<I", self.nNonce)
-        return r
+        kwargs['version'] = version
+        kwargs['prev_block'] = prev_block
+        kwargs['merkle_root'] = merkle_root
+        kwargs['timestamp'] = timestamp
+        kwargs['bits'] = bits
+        kwargs['nonce'] = nonce
 
-    def serialize(self):
-        r = self.serialize_hdr()
-        r += serialize.ser_vector(self.vtx)
-        return r
+        if 'txns' not in kwargs:
+            kwargs['txns'] = []
+
+        _types.SerializableDict.__init__(self, *args, **kwargs)
+
+    @property
+    def sha256(self):
+        if not hasattr(self, '_sha256'):
+            self.calc_sha256()
+
+        return self._sha256
 
     def calc_sha256(self):
-        if self.sha256 is None:
-            self.sha256 = serialize.Hash(self.serialize_hdr())
+        f = cStringIO.StringIO()
+        self['version'].serialize(f, version=self['version'])
+        self['prev_block'].serialize(f, version=self['version'])
+        self['merkle_root'].serialize(f, version=self['version'])
+        self['timestamp'].serialize(f, version=self['version'])
+        self['bits'].serialize(f, version=self['version'])
+        self['nonce'].serialize(f, version=self['version'])
+
+        self._sha256 = _types.Hash(data=f.getvalue())
+        return self._sha256
+
+    @property
+    def merkle(self):
+        if not hasattr(self, '_merkle'):
+            self.calc_merkle()
+
+        return self._merkle
 
     def calc_merkle(self):
-        hashes = []
-        for tx in self.vtx:
-            if not tx.is_valid():
-                return None
+        hashes = [tx.sha256 for tx in self['txns'] if tx.valid]
 
-            tx.calc_sha256()
-            hashes.append(serialize.ser_uint256(tx.sha256))
+        if len(hashes) != len(self['txns']):
+            return None
 
-        while len(hashes) > 1:
-            newhashes = []
-            for i in range(0, len(hashes), 2):
-                i2 = min(i+1, len(hashes)-1)
+        while (len(hashes) / 2) % 2 != 0:
+            hashes.append(hashes[-1])
 
-                newhash = hashlib.sha256(hashes[i] + hashes[i2]).digest()
-                newhash = hashlib.sha256(newhash).digest()
+        for right, left in itertools.izip(*([reversed(hashes)] * 2)):
+            hashes.insert(0, _types.Hash(data=left + right))
 
-                newhashes.append(newhash)
+        self._merkle_tree = hashes
+        self._merkle = hashes[0]
+        return self._merkle
 
-            hashes = newhashes
+    @property
+    def valid(self):
+        if (self.sha256 < self['bits'] and
+                self.merkle == self['merkle_root']):
+            return True
 
-        return serialize.uint256_from_str(hashes[0])
-
-    def is_valid(self):
-        self.calc_sha256()
-        target = serialize.uint256_from_compact(self.nBits)
-
-        if self.sha256 > target:
-            return False
-
-        if self.calc_merkle() != self.hashMerkleRoot:
-            return False
-
-        return True
-
-    def __repr__(self):
-        return ("CBlock(nVersion=%i hashPrevBlock=%064x "
-                "hashMerkleRoot=%064x nTime=%s nBits=%08x nNonce=%08x "
-                "vtx=%s)" % (self.nVersion, self.hashPrevBlock,
-                             self.hashMerkleRoot, time.ctime(self.nTime),
-                             self.nBits, self.nNonce, repr(self.vtx)))
+        return False
 
 
 class CUnsignedAlert(object):
