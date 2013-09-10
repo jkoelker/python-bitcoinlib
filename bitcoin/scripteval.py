@@ -6,18 +6,24 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
-import sys
-if sys.version > '3':
-    long = int
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
 import hashlib
+import struct
+import sys
+
 from bitcoin.serialize import Hash, Hash160, ser_uint256, ser_uint160
-from bitcoin.script import *
 from bitcoin.core import CTxOut, CTransaction
 from bitcoin.key import CKey
 from bitcoin.bignum import bn2vch, vch2bn
+
+from bitcoin.script import *  # noqa
+
+
+if sys.version > '3':
+    long = int
+
 
 def SignatureHash(script, txTo, inIdx, hashtype):
     if inIdx >= len(txTo.vin):
@@ -39,7 +45,8 @@ def SignatureHash(script, txTo, inIdx, hashtype):
     elif (hashtype & 0x1f) == SIGHASH_SINGLE:
         outIdx = inIdx
         if outIdx >= len(txtmp.vout):
-            return (1, "outIdx %d out of range (%d)" % (outIdx, len(txtmp.vout)))
+            return (1, "outIdx %d out of range (%d)" % (outIdx,
+                                                        len(txtmp.vout)))
 
         tmp = txtmp.vout[outIdx]
         txtmp.vout = []
@@ -63,20 +70,25 @@ def SignatureHash(script, txTo, inIdx, hashtype):
 
     return (hash,)
 
+
 def CheckSig(sig, pubkey, script, txTo, inIdx, hashtype):
     key = CKey()
     key.set_pubkey(pubkey)
 
     if len(sig) == 0:
         return False
+
     if hashtype == 0:
         hashtype = ord(sig[-1])
+
     elif hashtype != ord(sig[-1]):
         return False
+
     sig = sig[:-1]
 
     tup = SignatureHash(script, txTo, inIdx, hashtype)
     return key.verify(ser_uint256(tup[0]), sig)
+
 
 def CheckMultiSig(opcode, script, stack, txTo, inIdx, hashtype):
     i = 1
@@ -86,6 +98,7 @@ def CheckMultiSig(opcode, script, stack, txTo, inIdx, hashtype):
     keys_count = CastToBigNum(stack[-i])
     if keys_count < 0 or keys_count > 20:
         return False
+
     i += 1
     ikey = i
     i += keys_count
@@ -95,6 +108,7 @@ def CheckMultiSig(opcode, script, stack, txTo, inIdx, hashtype):
     sigs_count = CastToBigNum(stack[-i])
     if sigs_count < 0 or sigs_count > keys_count:
         return False
+
     i += 1
     isig = i
     i += sigs_count
@@ -138,11 +152,13 @@ def CheckMultiSig(opcode, script, stack, txTo, inIdx, hashtype):
 
     return True
 
+
 def dumpstack(msg, stack):
     print("%s stacksz %d" % (msg, len(stack)))
     for i in range(len(stack)):
         vch = stack[i]
         print("#%d: %s" % (i, vch.encode('hex')))
+
 
 ISA_UNOP = {
     OP_1ADD,
@@ -154,6 +170,7 @@ ISA_UNOP = {
     OP_NOT,
     OP_0NOTEQUAL,
 }
+
 
 def UnaryOp(opcode, stack):
     if len(stack) < 1:
@@ -192,6 +209,7 @@ def UnaryOp(opcode, stack):
 
     return True
 
+
 ISA_BINOP = {
     OP_ADD,
     OP_SUB,
@@ -209,6 +227,7 @@ ISA_BINOP = {
     OP_MIN,
     OP_MAX,
 }
+
 
 def BinOp(opcode, stack):
     if len(stack) < 2:
@@ -282,11 +301,14 @@ def BinOp(opcode, stack):
 
     return True
 
+
 def CheckExec(vfExec):
     for b in vfExec:
         if not b:
             return False
+
     return True
+
 
 def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
     altstack = []
@@ -295,6 +317,7 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
     while script.pc < script.pend:
         if not script.getop():
             return False
+
         sop = script.sop
 
         fExec = CheckExec(vfExec)
@@ -303,7 +326,9 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
             stack.append(sop.data)
             continue
 
-        elif fExec and sop.op == OP_1NEGATE or ((sop.op >= OP_1) and (sop.op <= OP_16)):
+        elif (fExec and
+                sop.op == OP_1NEGATE or
+                ((sop.op >= OP_1) and (sop.op <= OP_16))):
             v = sop.op - (OP_1 - 1)
             stack.append(bn2vch(v))
 
@@ -358,10 +383,12 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
             stack.append(v2)
             stack.append(v3)
 
-        elif fExec and sop.op == OP_CHECKMULTISIG or sop.op == OP_CHECKMULTISIGVERIFY:
+        elif (fExec and
+                sop.op == OP_CHECKMULTISIG or
+                sop.op == OP_CHECKMULTISIGVERIFY):
             tmpScript = CScript(script.vch[script.pbegincodehash:script.pend])
             ok = CheckMultiSig(sop.op, tmpScript, stack, txTo,
-                       inIdx, hashtype)
+                               inIdx, hashtype)
             if not ok:
                 return False
 
@@ -375,10 +402,11 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
             # FIXME: find-and-delete vchSig
 
             ok = CheckSig(vchSig, vchPubKey, tmpScript,
-                      txTo, inIdx, hashtype)
+                          txTo, inIdx, hashtype)
             if ok:
                 if sop.op != OP_CHECKSIGVERIFY:
                     stack.append(b"\x01")
+
             else:
                 if sop.op == OP_CHECKSIGVERIFY:
                     return False
@@ -471,7 +499,9 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
                 return False
             del stack[-2]
 
-        elif fExec and sop.op == OP_NOP or (sop.op >= OP_NOP1 and sop.op <= OP_NOP10):
+        elif (fExec and
+                sop.op == OP_NOP or
+                (sop.op >= OP_NOP1 and sop.op <= OP_NOP10)):
             pass
 
         elif fExec and sop.op == OP_OVER:
@@ -555,12 +585,15 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
         elif fExec and sop.op == OP_WITHIN:
             if len(stack) < 3:
                 return False
+
             bn3 = CastToBigNum(stack.pop())
             bn2 = CastToBigNum(stack.pop())
             bn1 = CastToBigNum(stack.pop())
             v = (bn2 <= bn1) and (bn1 < bn3)
+
             if v:
                 stack.append(b"\x01")
+
             else:
                 stack.append(b"\x00")
 
@@ -570,9 +603,11 @@ def EvalScript(stack, scriptIn, txTo, inIdx, hashtype):
 
     return True
 
+
 def CastToBigNum(s):
     v = vch2bn(s)
     return v
+
 
 def CastToBool(s):
     for i in range(len(s)):
@@ -580,19 +615,25 @@ def CastToBool(s):
         if sv != 0:
             if (i == (len(s) - 1)) and (sv == 0x80):
                 return False
+
             return True
 
     return False
+
 
 def VerifyScript(scriptSig, scriptPubKey, txTo, inIdx, hashtype):
     stack = []
     if not EvalScript(stack, scriptSig, txTo, inIdx, hashtype):
         return False
+
     if not EvalScript(stack, scriptPubKey, txTo, inIdx, hashtype):
         return False
+
     if len(stack) == 0:
         return False
+
     return CastToBool(stack[-1])
+
 
 def VerifySignature(txFrom, txTo, inIdx, hashtype):
     if inIdx >= len(txTo.vin):
@@ -609,11 +650,7 @@ def VerifySignature(txFrom, txTo, inIdx, hashtype):
         return False
 
     if not VerifyScript(txin.scriptSig, txout.scriptPubKey, txTo, inIdx,
-                hashtype):
+                        hashtype):
         return False
 
     return True
-
-
-
-

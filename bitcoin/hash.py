@@ -6,21 +6,23 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
 import struct
-from bitcoin.serialize import *
-from bitcoin.coredefs import *
-from bitcoin.script import CScript
+import sys
+
 
 def ROTL32(x, r):
     assert x <= 0xFFFFFFFF
     return ((x << r) & 0xFFFFFFFF) | (x >> (32 - r))
 
+
 def MurmurHash3(nHashSeed, vDataToHash):
     """MurmurHash3 (x86_32)
 
-    Used for bloom filters. See http://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
+    Used for bloom filters.
+    See http://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
     """
 
     assert nHashSeed <= 0xFFFFFFFF
@@ -31,8 +33,8 @@ def MurmurHash3(nHashSeed, vDataToHash):
 
     # body
     i = 0
-    while i < len(vDataToHash) - len(vDataToHash) % 4 \
-          and len(vDataToHash) - i >= 4:
+    while (i < len(vDataToHash) - len(vDataToHash) % 4 and
+            len(vDataToHash) - i >= 4):
 
         k1 = struct.unpack(b"<L", vDataToHash[i:i+4])[0]
 
@@ -49,15 +51,18 @@ def MurmurHash3(nHashSeed, vDataToHash):
     # tail
     k1 = 0
     j = (len(vDataToHash) // 4) * 4
-    import sys
+
     bord = ord
     if sys.version > '3':
         # In Py3 indexing bytes returns numbers, not characters
         bord = lambda x: x
+
     if len(vDataToHash) & 3 >= 3:
         k1 ^= bord(vDataToHash[j+2]) << 16
+
     if len(vDataToHash) & 3 >= 2:
         k1 ^= bord(vDataToHash[j+1]) << 8
+
     if len(vDataToHash) & 3 >= 1:
         k1 ^= bord(vDataToHash[j])
 

@@ -1,7 +1,8 @@
 # Distributed under the MIT/X11 software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 
 import json
 import os
@@ -9,7 +10,7 @@ import unittest
 
 from binascii import unhexlify
 
-from bitcoin.base58 import *
+from bitcoin import base58
 
 
 def load_test_vector(name):
@@ -17,19 +18,21 @@ def load_test_vector(name):
         for testcase in json.load(fd):
             yield testcase
 
+
 class Test_base58(unittest.TestCase):
     def test_encode_decode(self):
-        for exp_bin, exp_base58 in load_test_vector('base58_encode_decode.json'):
+        vector = 'base58_encode_decode.json'
+        for exp_bin, exp_base58 in load_test_vector(vector):
             exp_bin = unhexlify(exp_bin.encode('utf8'))
 
-            act_base58 = encode(exp_bin)
-            act_bin = decode(exp_base58)
+            act_base58 = base58.encode(exp_bin)
+            act_bin = base58.decode(exp_base58)
 
             self.assertEqual(act_base58, exp_base58)
             self.assertEqual(act_bin, exp_bin)
 
     def test_invalid_base58_exception(self):
-        with self.assertRaises(InvalidBase58Error):
-            decode('#')
+        with self.assertRaises(base58.InvalidBase58Error):
+            base58.decode('#')
 
     # FIXME: need to test CBitcoinAddress
